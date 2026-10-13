@@ -1,56 +1,114 @@
-from tasks import run_comfy_task
+"""
+任务提交脚本 - 多算力版本
 
-# 这里替换成你从ComfyUI保存的【API格式工作流json】
-# 在ComfyUI页面：Save(API)，复制出来粘贴在这里
-# 注意：下面 ckpt_name / vae_name 是占位符，要改成你 ComfyUI/models 目录里实际存在的文件名
-comfy_workflow = {
+用法示例：
+    python submit_task.py                      # 智能路由（默认）
+    python submit_task.py gpu0                 # 显式指定 gpu0
+    python submit_task.py gpu1
+    python submit_task.py auto                 # 智能路由（轮询）
+    python submit_task.py least                # 智能路由（负载最低）
+    python submit_task.py --priority high gpu0 # VIP 任务
+    python submit_task.py batch 5 gpu0         # 批量提交 5 个
+"""
+import sys
+import argparse
+from tasks import run_comfy_gpu0, run_comfy_gpu1, run_comfy_cpu
+from scheduler import SmartScheduler
+from comfy_instances import COMFY_INSTANCES, all_instances
+
+# === 示例工作流（替换成你的真实 workflow JSON） ===
+BASE_WORKFLOW = {
     "3": {
         "class_type": "KSampler",
         "inputs": {
-            "seed": 12345,
-            "steps": 20,
-            "cfg": 7,
-            "sampler_name": "euler",
-            "scheduler": "normal",
+            "seed": 12345, "steps": 20, "cfg": 7,
+            "sampler_name": "euler", "scheduler": "normal",
             "denoising": 1,
             "model": ["4", 0],
             "positive": ["6", 0],
             "negative": ["7", 0],
-            "latent_image": ["5", 0]
+            "latent_image": ["5", 0],
         }
     },
     "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "your_model.safetensors"}},
     "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512, "batch_size": 1}},
     "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "masterpiece, best quality, girl", "clip": ["4", 1]}},
-    "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "worst quality, low quality", "clip": ["4", 1]}},
+    "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "worst quality", "clip": ["4", 1]}},
     "8": {"class_type": "VAELoader", "inputs": {"vae_name": "your_vae.safetensors"}},
     "9": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["8", 0]}},
     "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "celery_gen"}}
 }
 
 
-def submit_one():
-    """提交单个任务，返回 task id"""
-    task = run_comfy_task.delay(comfy_workflow)
-    print(f"任务已送入队列，task id: {task.id}")
-    print(f"查询结果：run_comfy_task.AsyncResult('{task.id}').get()")
+def get_task_func(instance):
+    return globals()[f"run_comfy_{instance}"]
+
+
+def submit_explicit(instance, workflow=None, priority=None):
+    """显式提交到指定实例"""
+    if instance not in COMFY_INSTANCES:
+        print(f"❌ 未知实例 {instance}，可选: {all_instances()}")
+        return None
+    wf = workflow or BASE_WORKFLOW
+    task_func = get_task_func(instance)
+    kwargs = {"queue": instance}
+    if priority == "high":
+        kwargs["priority"] = 9  # Celery 0-9，9 最高
+    task = task_func.apply_async(args=[wf], **kwargs)
+    print(f"✅ [{instance}] task_id={task.id}")
     return task
 
 
-def submit_batch(n=3):
-    """批量提交 n 个任务，每个的 seed 不同"""
+def submit_auto(strategy="round_robin", workflow=None, priority=None):
+    """智能路由：让 scheduler 挑一个实例"""
+    wf = workflow or BASE_WORKFLOW
+    sched = SmartScheduler()
+    chosen = sched.pick(strategy=strategy)
+    print(f"🧠 调度器选了 [{chosen}] (策略={strategy})")
+    return submit_explicit(chosen, wf, priority)
+
+
+def submit_batch(instance, n, priority=None):
+    """批量提交 n 个任务到同一实例"""
     tasks = []
+    task_func = get_task_func(instance)
     for i in range(n):
-        wf = dict(comfy_workflow)
-        wf["3"] = dict(wf["3"])
-        wf["3"]["inputs"] = dict(wf["3"]["inputs"])
-        wf["3"]["inputs"]["seed"] = 12345 + i
-        task = run_comfy_task.delay(wf)
-        print(f"[{i+1}/{n}] 任务已入队: {task.id}")
+        wf = dict(BASE_WORKFLOW)
+        wf["3"]["inputs"]["seed"] = 1000 + i
+        kwargs = {"queue": instance}
+        if priority == "high":
+            kwargs["priority"] = 9
+        task = task_func.apply_async(args=[wf], **kwargs)
+        print(f"  [{i+1}/{n}] task_id={task.id}")
         tasks.append(task)
     return tasks
 
 
+def main():
+    parser = argparse.ArgumentParser(description="ComfyUI 任务提交")
+    parser.add_argument("target", nargs="?", default="auto",
+                        help=f"目标实例 ({'/'.join(all_instances())}) 或策略 (auto/least)")
+    parser.add_argument("extra", nargs="?", default=None,
+                        help="可选: batch N 表示批量 N 个")
+    parser.add_argument("--priority", choices=["high", "normal"], default="normal",
+                        help="任务优先级 (high=VIP)")
+    args = parser.parse_args()
+
+    # 批量模式
+    if args.extra and args.extra.isdigit() and args.target in COMFY_INSTANCES:
+        n = int(args.extra)
+        print(f"📦 批量提交 {n} 个任务到 [{args.target}]")
+        submit_batch(args.target, n, args.priority)
+        return
+
+    # 智能路由
+    if args.target in ("auto", "least", "round_robin"):
+        submit_auto(strategy=args.target, priority=args.priority)
+        return
+
+    # 显式指定
+    submit_explicit(args.target, priority=args.priority)
+
+
 if __name__ == "__main__":
-    # 默认提交 1 个任务；想批量改成 submit_batch(5)
-    submit_one()
+    main()

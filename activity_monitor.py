@@ -1,136 +1,110 @@
 """
-键鼠活动监听 + ComfyUI 任务调度器
+键鼠活动监听 + 多实例调度器
 
-用法：
-    1. 装依赖：pip install pynput redis requests
-    2. 启动一个 PowerShell 窗口运行：python activity_monitor.py
-    3. 另一个窗口照常跑 Celery worker 和提交任务
-    4. 你用电脑时，ComfyUI 自动暂停；你停手 IDLE_THRESHOLD 秒后自动恢复
-
-核心逻辑：
-    - pynput 监听鼠标/键盘 → 更新"最后活动时间"
-    - 主循环每秒检查：
-        * 用户活动中（最近 IDLE_THRESHOLD 秒内有动作）
-          → 写 Redis comfy:pause = true → 主动调 ComfyUI /interrupt
-        * 用户空闲超过 IDLE_THRESHOLD 秒
-          → 写 Redis comfy:pause = false → worker 自动继续
+增强版（支持多 ComfyUI 实例）：
+- 监听鼠标/键盘，更新最后活动时间
+- 用户活动时：给所有在线实例发 pause + interrupt
+- 空闲时：解除 pause
 """
 import time
-import threading
 import requests
 import redis
 from pynput import mouse, keyboard
+from comfy_instances import all_instances, get_instance
+from scheduler import is_alive
 
 # === 配置 ===
-COMFY_URL = "http://127.0.0.1:8188"
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379
 REDIS_DB = 0
-
-# 空闲阈值：多久没动鼠标键盘算"空闲"（秒）
-IDLE_THRESHOLD = 3.0
-
-# 主循环检查间隔
-POLL_INTERVAL = 1.0
-
-# Redis key（必须和 tasks.py 里的对齐）
 KEY_PAUSE = "comfy:pause"
-KEY_CURRENT_PROMPT = "comfy:current_prompt_id"
-KEY_CURRENT_TASK = "comfy:current_task_id"
 
+IDLE_THRESHOLD = 3.0   # 停手几秒算"空闲"
+POLL_INTERVAL = 1.0    # 检查频率
 
-# 用 list 包装是为了让嵌套函数能修改它（Python 的 closure 限制）
+r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
 last_activity = [time.time()]
 
 
 def on_activity(*args, **kwargs):
-    """pynput 回调：只要鼠标/键盘有任何动作就刷新时间戳"""
     last_activity[0] = time.time()
 
 
-def interrupt_comfy():
-    """调用 ComfyUI /interrupt"""
-    try:
-        r = requests.post(f"{COMFY_URL}/interrupt", timeout=5)
-        return r.status_code == 200
-    except Exception as e:
-        print(f"[monitor] interrupt 异常（可忽略，ComfyUI 可能没在跑）: {e}")
-        return False
+def interrupt_all_alive():
+    """给所有在线 ComfyUI 实例发 interrupt"""
+    interrupted = 0
+    for inst in all_instances():
+        if not is_alive(inst):
+            continue
+        url = get_instance(inst)["url"]
+        try:
+            requests.post(f"{url}/interrupt", timeout=3)
+            interrupted += 1
+        except Exception as e:
+            print(f"\n[monitor] interrupt {inst} 失败: {e}")
+    return interrupted
+
+
+def get_running_prompts():
+    """收集所有实例当前正在跑的 prompt（用于显示）"""
+    out = {}
+    for inst in all_instances():
+        pid = r.get(f"comfy:{inst}:prompt_id")
+        if pid:
+            out[inst] = pid
+    return out
 
 
 def main():
-    # 连接 Redis
-    rcli = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
-    print(f"[monitor] 已连接 Redis: {REDIS_HOST}:{REDIS_PORT}")
+    r.set(KEY_PAUSE, "false")
+    print(f"[monitor] Redis 已连接: {REDIS_HOST}:{REDIS_PORT}")
 
-    # 初始状态：未暂停
-    rcli.set(KEY_PAUSE, "false")
-
-    # 启动鼠标监听
-    mouse_listener = mouse.Listener(
-        on_move=on_activity,      # 鼠标移动
-        on_click=on_activity,     # 鼠标点击
-        on_scroll=on_activity,    # 滚轮
-    )
-    # 启动键盘监听
-    keyboard_listener = keyboard.Listener(
-        on_press=on_activity,     # 按键
-        on_release=on_activity,   # 松键
-    )
-    mouse_listener.start()
-    keyboard_listener.start()
+    # 启动监听
+    mouse.Listener(on_move=on_activity, on_click=on_activity, on_scroll=on_activity).start()
+    keyboard.Listener(on_press=on_activity, on_release=on_activity).start()
     print("[monitor] 鼠标 + 键盘监听已启动")
 
-    print(f"[monitor] 空闲阈值 {IDLE_THRESHOLD}s。开始监控...")
-    print("[monitor] 你用电脑时 ComfyUI 会自动暂停；停手 {}s 后自动恢复。".format(IDLE_THRESHOLD))
-    print("[monitor] 按 Ctrl+C 退出\n")
+    # 检查哪些 ComfyUI 在线
+    alive = [i for i in all_instances() if is_alive(i)]
+    print(f"[monitor] 在线 ComfyUI: {alive if alive else '⚠️  全部离线！'}")
 
-    last_state = None  # 用来只在状态变化时打印
+    print(f"[monitor] 空闲阈值 {IDLE_THRESHOLD}s。按 Ctrl+C 退出\n")
+    last_state = None
 
     try:
         while True:
             now = time.time()
-            idle_for = now - last_activity[0]
-            user_active = idle_for < IDLE_THRESHOLD
-
-            # 读 worker 当前在做什么（仅用于显示）
-            current_prompt = rcli.get(KEY_CURRENT_PROMPT) or "-"
-            current_task = rcli.get(KEY_CURRENT_TASK) or "-"
-
-            # 决定新状态
+            idle = now - last_activity[0]
+            user_active = idle < IDLE_THRESHOLD
             new_state = "PAUSE" if user_active else "RESUME"
 
-            # 状态变化时打印一行
             if new_state != last_state:
                 if new_state == "PAUSE":
-                    print(f"[monitor] ⚠️   检测到用户活动（{idle_for:.1f}s 内有动作）→ 暂停 ComfyUI")
+                    print(f"\n[monitor] ⚠️   检测到用户活动（{idle:.1f}s 内）→ 暂停所有 ComfyUI")
                 else:
-                    print(f"[monitor] ✅  空闲 {IDLE_THRESHOLD}s+ → 恢复 ComfyUI")
+                    print(f"\n[monitor] ✅  空闲 {IDLE_THRESHOLD}s+ → 恢复")
                 last_state = new_state
 
-            # 把状态写入 Redis，worker 会读到
-            rcli.set(KEY_PAUSE, "true" if user_active else "false")
+            r.set(KEY_PAUSE, "true" if user_active else "false")
 
-            # 如果要暂停且 ComfyUI 正在跑，主动调一次 interrupt
-            # （worker 自己也会检测到 pause，但主动调一次能更快响应）
-            if user_active and current_prompt != "-":
-                interrupt_comfy()
+            if user_active:
+                # 主动给所有在线实例发 interrupt（worker 自己也会检测，双保险）
+                n = interrupt_all_alive()
+                if n > 0:
+                    print(f"[monitor]    已 interrupt {n} 个实例")
 
-            # 每秒打一次状态（方便你观察）
-            status_char = "⏸ PAUSE" if user_active else "▶ RESUME"
-            print(
-                f"\r[{status_char}] idle={idle_for:5.1f}s  prompt={current_prompt}  task={current_task[:8]}",
-                end="",
-                flush=True,
-            )
+            # 状态行
+            running = get_running_prompts()
+            char = "⏸" if user_active else "▶"
+            state = "PAUSE" if user_active else "RESUME"
+            run_str = " ".join(f"{k}={v[:6]}" for k, v in running.items()) or "-"
+            print(f"\r[{char} {state}] idle={idle:5.1f}s  running: {run_str}   ", end="", flush=True)
 
             time.sleep(POLL_INTERVAL)
 
     except KeyboardInterrupt:
-        print("\n\n[monitor] 收到 Ctrl+C，正在清理...")
-        rcli.set(KEY_PAUSE, "false")
-        mouse_listener.stop()
-        keyboard_listener.stop()
+        print("\n\n[monitor] 收到 Ctrl+C，清理中...")
+        r.set(KEY_PAUSE, "false")
         print("[monitor] 已退出。")
 
 
