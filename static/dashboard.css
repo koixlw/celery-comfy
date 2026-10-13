@@ -1,0 +1,247 @@
+/* 暗色主题 */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0f1419;
+    color: #e6e6e6;
+    line-height: 1.5;
+    min-height: 100vh;
+}
+
+.topbar {
+    background: #1a2332;
+    border-bottom: 1px solid #2a3441;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.topbar h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #6cb6ff;
+}
+
+.badges {
+    display: flex;
+    gap: 8px;
+}
+
+.badge {
+    background: #2a3441;
+    color: #888;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.badge.on {
+    background: #d97706;
+    color: #fff;
+}
+
+.badge-blue.on { background: #2563eb; color: #fff; }
+.badge-yellow.on { background: #ca8a04; color: #fff; }
+
+main {
+    max-width: 1200px;
+    margin: 24px auto;
+    padding: 0 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.card {
+    background: #1a2332;
+    border: 1px solid #2a3441;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.card h2 {
+    font-size: 16px;
+    margin-bottom: 14px;
+    color: #6cb6ff;
+}
+
+/* 实例表格 */
+.inst-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.inst-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: #0f1419;
+    color: #888;
+    font-weight: 500;
+    border-bottom: 1px solid #2a3441;
+}
+
+.inst-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #2a3441;
+}
+
+.inst-table tr:last-child td {
+    border-bottom: none;
+}
+
+.inst-table tr:hover {
+    background: #0f1419;
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+
+.status-dot.online { background: #10b981; box-shadow: 0 0 6px #10b981; }
+.status-dot.offline { background: #ef4444; }
+
+.task-pill {
+    font-family: "JetBrains Mono", "Consolas", monospace;
+    font-size: 11px;
+    background: #0f1419;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #6cb6ff;
+}
+
+/* GPU 网格 */
+.gpu-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+}
+
+.gpu-card {
+    background: #0f1419;
+    border: 1px solid #2a3441;
+    border-radius: 6px;
+    padding: 14px;
+}
+
+.gpu-card h3 {
+    font-size: 14px;
+    margin-bottom: 10px;
+    color: #6cb6ff;
+}
+
+.bar {
+    height: 8px;
+    background: #2a3441;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 6px 0;
+}
+
+.bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #10b981, #6cb6ff);
+    transition: width 0.5s;
+}
+
+.bar-fill.warn { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+
+.metric {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #888;
+    margin: 4px 0;
+}
+
+.metric strong { color: #e6e6e6; }
+
+/* 控制按钮 */
+.control-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.btn {
+    background: #2a3441;
+    color: #e6e6e6;
+    border: 1px solid #3a4451;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.15s;
+}
+
+.btn:hover { background: #3a4451; }
+.btn:active { transform: scale(0.97); }
+
+.btn-warn { background: #d97706; border-color: #d97706; }
+.btn-warn:hover { background: #ea870c; }
+.btn-ok { background: #10b981; border-color: #10b981; }
+.btn-ok:hover { background: #059669; }
+.btn-danger { background: #dc2626; border-color: #dc2626; }
+.btn-danger:hover { background: #ef4444; }
+.btn-primary { background: #2563eb; border-color: #2563eb; }
+.btn-primary:hover { background: #1d4ed8; }
+
+/* 提交表单 */
+.submit-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.submit-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    color: #888;
+}
+
+.submit-form select,
+.submit-form textarea {
+    background: #0f1419;
+    border: 1px solid #2a3441;
+    color: #e6e6e6;
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: inherit;
+}
+
+.submit-form textarea {
+    font-family: "JetBrains Mono", "Consolas", monospace;
+    resize: vertical;
+}
+
+.submit-form select:focus,
+.submit-form textarea:focus {
+    outline: none;
+    border-color: #6cb6ff;
+}
+
+.muted {
+    color: #666;
+    font-size: 13px;
+    text-align: center;
+    padding: 16px;
+}
+
+.center { text-align: center; }
+footer { padding: 20px 0; }
+footer a { color: #6cb6ff; text-decoration: none; }
+footer a:hover { text-decoration: underline; }

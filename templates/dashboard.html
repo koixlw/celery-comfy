@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ComfyUI 任务调度面板</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>🎨 ComfyUI 任务调度面板</h1>
+        <div class="badges">
+            <span class="badge" id="badge-pause">⏸ 暂停</span>
+            <span class="badge" id="badge-vip">⭐ VIP</span>
+            <span class="badge badge-blue" id="badge-active">活跃 0</span>
+            <span class="badge badge-yellow" id="badge-queue">队列 0</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- 实例状态 -->
+        <section class="card">
+            <h2>📊 ComfyUI 实例</h2>
+            <table class="inst-table">
+                <thead>
+                    <tr>
+                        <th>实例</th>
+                        <th>状态</th>
+                        <th>活跃/上限</th>
+                        <th>队列</th>
+                        <th>设备</th>
+                        <th>当前任务</th>
+                    </tr>
+                </thead>
+                <tbody id="inst-tbody">
+                    <tr><td colspan="6" class="muted">加载中...</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- GPU 状态 -->
+        <section class="card">
+            <h2>🖥️ GPU 状态</h2>
+            <div class="gpu-grid" id="gpu-grid">
+                <div class="muted">暂无数据（请先启动 gpu_monitor.py）</div>
+            </div>
+        </section>
+
+        <!-- 控制面板 -->
+        <section class="card">
+            <h2>⚙️ 控制台</h2>
+            <div class="control-row">
+                <button class="btn btn-warn" onclick="apiPause()">⏸ 暂停所有任务</button>
+                <button class="btn btn-ok" onclick="apiResume()">▶ 恢复所有任务</button>
+                <button class="btn btn-danger" onclick="apiInterrupt()">⚡ 立即中断所有 ComfyUI</button>
+                <button class="btn" onclick="refresh()">🔄 手动刷新</button>
+            </div>
+        </section>
+
+        <!-- 任务提交 -->
+        <section class="card">
+            <h2>📤 提交任务</h2>
+            <div class="submit-form">
+                <label>
+                    目标实例
+                    <select id="submit-instance">
+                        {% for name, cfg in instances.items() %}
+                        <option value="{{ name }}">{{ name }} ({{ cfg.device }})</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>
+                    优先级
+                    <select id="submit-priority">
+                        <option value="normal">普通（5）</option>
+                        <option value="vip">⭐ VIP（9）- 抢 GPU</option>
+                    </select>
+                </label>
+                <label>
+                    Workflow JSON
+                    <textarea id="submit-workflow" rows="6" placeholder='{"3": {"class_type": "KSampler", ...}}'></textarea>
+                </label>
+                <button class="btn btn-primary" onclick="apiSubmit()">🚀 提交</button>
+                <div id="submit-result" class="muted"></div>
+            </div>
+        </section>
+
+        <footer class="muted center">
+            自动刷新：每 2 秒 · <a href="javascript:location.reload()">强制刷新</a>
+        </footer>
+    </main>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

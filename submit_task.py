@@ -1,20 +1,26 @@
 """
-任务提交脚本 - 多算力版本
+任务提交脚本 - 多算力 + VIP 优先级版本
 
 用法示例：
-    python submit_task.py                      # 智能路由（默认）
+    python submit_task.py                      # 智能路由（轮询）
     python submit_task.py gpu0                 # 显式指定 gpu0
-    python submit_task.py gpu1
-    python submit_task.py auto                 # 智能路由（轮询）
     python submit_task.py least                # 智能路由（负载最低）
-    python submit_task.py --priority high gpu0 # VIP 任务
-    python submit_task.py batch 5 gpu0         # 批量提交 5 个
+    python submit_task.py gpu0 vip             # VIP 任务
+    python submit_task.py gpu0 5               # 批量 5 个
+    python submit_task.py gpu0 5 vip           # 批量 5 个 VIP
 """
 import sys
 import argparse
+import redis
 from tasks import run_comfy_gpu0, run_comfy_gpu1, run_comfy_cpu
 from scheduler import SmartScheduler
 from comfy_instances import COMFY_INSTANCES, all_instances
+
+REDIS_HOST = "127.0.0.1"
+REDIS_PORT = 6379
+REDIS_DB = 0
+KEY_VIP_PENDING = "comfy:vip_pending"
+rcli = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
 
 # === 示例工作流（替换成你的真实 workflow JSON） ===
 BASE_WORKFLOW = {
@@ -44,70 +50,77 @@ def get_task_func(instance):
     return globals()[f"run_comfy_{instance}"]
 
 
-def submit_explicit(instance, workflow=None, priority=None):
-    """显式提交到指定实例"""
+def submit_one(instance, priority='normal', workflow=None):
+    """提交单个任务"""
     if instance not in COMFY_INSTANCES:
         print(f"❌ 未知实例 {instance}，可选: {all_instances()}")
         return None
-    wf = workflow or BASE_WORKFLOW
+
     task_func = get_task_func(instance)
-    kwargs = {"queue": instance}
-    if priority == "high":
-        kwargs["priority"] = 9  # Celery 0-9，9 最高
-    task = task_func.apply_async(args=[wf], **kwargs)
-    print(f"✅ [{instance}] task_id={task.id}")
+    wf = workflow or BASE_WORKFLOW
+
+    # VIP 任务：先设置 pending 标志（worker 会看到并让位）
+    if priority == 'vip':
+        rcli.set(KEY_VIP_PENDING, "true")
+
+    priority_val = 9 if priority == 'vip' else 5
+    task = task_func.apply_async(args=[wf, priority], priority=priority_val)
+    icon = "⭐" if priority == 'vip' else "✅"
+    print(f"{icon} [{instance}] ({priority}) task_id={task.id}")
     return task
 
 
-def submit_auto(strategy="round_robin", workflow=None, priority=None):
-    """智能路由：让 scheduler 挑一个实例"""
-    wf = workflow or BASE_WORKFLOW
-    sched = SmartScheduler()
-    chosen = sched.pick(strategy=strategy)
-    print(f"🧠 调度器选了 [{chosen}] (策略={strategy})")
-    return submit_explicit(chosen, wf, priority)
-
-
-def submit_batch(instance, n, priority=None):
-    """批量提交 n 个任务到同一实例"""
+def submit_batch(instance, n, priority='normal'):
+    """批量提交 n 个任务"""
     tasks = []
+    icon = "⭐" if priority == 'vip' else "📦"
+    print(f"{icon} 批量提交 {n} 个 {priority} 任务到 [{instance}]")
     task_func = get_task_func(instance)
+    priority_val = 9 if priority == 'vip' else 5
+
+    if priority == 'vip':
+        rcli.set(KEY_VIP_PENDING, "true")
+
     for i in range(n):
         wf = dict(BASE_WORKFLOW)
         wf["3"]["inputs"]["seed"] = 1000 + i
-        kwargs = {"queue": instance}
-        if priority == "high":
-            kwargs["priority"] = 9
-        task = task_func.apply_async(args=[wf], **kwargs)
+        task = task_func.apply_async(args=[wf, priority], priority=priority_val)
         print(f"  [{i+1}/{n}] task_id={task.id}")
         tasks.append(task)
     return tasks
 
 
+def submit_auto(strategy='round_robin', priority='normal'):
+    """智能路由"""
+    sched = SmartScheduler()
+    chosen = sched.pick(strategy=strategy)
+    print(f"🧠 调度器选了 [{chosen}] (策略={strategy})")
+    return submit_one(chosen, priority)
+
+
 def main():
     parser = argparse.ArgumentParser(description="ComfyUI 任务提交")
     parser.add_argument("target", nargs="?", default="auto",
-                        help=f"目标实例 ({'/'.join(all_instances())}) 或策略 (auto/least)")
-    parser.add_argument("extra", nargs="?", default=None,
-                        help="可选: batch N 表示批量 N 个")
-    parser.add_argument("--priority", choices=["high", "normal"], default="normal",
-                        help="任务优先级 (high=VIP)")
+                        help="目标实例 (gpu0/gpu1/cpu) 或策略 (auto/least/round_robin)")
+    parser.add_argument("count", nargs="?", type=int, default=None,
+                        help="批量数量，如 5")
+    parser.add_argument("priority", nargs="?", default="normal",
+                        choices=["normal", "vip"],
+                        help="优先级: normal（普通） 或 vip（VIP 抢 GPU）")
     args = parser.parse_args()
 
     # 批量模式
-    if args.extra and args.extra.isdigit() and args.target in COMFY_INSTANCES:
-        n = int(args.extra)
-        print(f"📦 批量提交 {n} 个任务到 [{args.target}]")
-        submit_batch(args.target, n, args.priority)
+    if args.count and args.target in COMFY_INSTANCES:
+        submit_batch(args.target, args.count, args.priority)
         return
 
     # 智能路由
-    if args.target in ("auto", "least", "round_robin"):
+    if args.target in ("auto", "least", "round_robin", "random"):
         submit_auto(strategy=args.target, priority=args.priority)
         return
 
     # 显式指定
-    submit_explicit(args.target, priority=args.priority)
+    submit_one(args.target, args.priority)
 
 
 if __name__ == "__main__":
