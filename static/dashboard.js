@@ -34,6 +34,31 @@ function renderInstances(data) {
     tbody.innerHTML = rows || '<tr><td colspan="6" class="muted">无实例</td></tr>';
 }
 
+function renderWorkers(data) {
+    const tbody = document.getElementById('workers-tbody');
+    if (!data.workers || data.workers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="muted">无 worker 注册。运行 <code>start_worker_supervised.bat</code> 启动</td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.workers.map(w => {
+        const aliveDot = w.alive
+            ? '<span class="status-dot online"></span>在线'
+            : '<span class="status-dot offline"></span>离线';
+        const mem = `${w.mem_free_mb}/${w.mem_total_mb}MB`;
+        return `
+            <tr>
+                <td><strong>${w.worker_id}</strong></td>
+                <td>${w.hostname}<br><small class="muted" style="padding:0">${w.ip || ''}</small></td>
+                <td>GPU ${w.gpu_index}: ${w.gpu_name}</td>
+                <td>${mem}</td>
+                <td><code>${w.queue}</code></td>
+                <td>${w.current_load}/${w.max_concurrent}</td>
+                <td>${aliveDot}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
 function renderGpus(data) {
     const grid = document.getElementById('gpu-grid');
     if (!data.gpus || data.gpus.length === 0) {
@@ -79,6 +104,7 @@ async function refresh() {
     if (!data) return;
     renderBadges(data);
     renderInstances(data);
+    renderWorkers(data);
     renderGpus(data);
 }
 

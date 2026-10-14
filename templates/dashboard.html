@@ -20,7 +20,7 @@
     <main>
         <!-- 实例状态 -->
         <section class="card">
-            <h2>📊 ComfyUI 实例</h2>
+            <h2>📊 ComfyUI 实例（本地）</h2>
             <table class="inst-table">
                 <thead>
                     <tr>
@@ -36,6 +36,30 @@
                     <tr><td colspan="6" class="muted">加载中...</td></tr>
                 </tbody>
             </table>
+        </section>
+
+        <!-- 算力资源池（多机器） -->
+        <section class="card">
+            <h2>🌐 算力资源池（多机器）</h2>
+            <table class="inst-table">
+                <thead>
+                    <tr>
+                        <th>Worker</th>
+                        <th>主机 / IP</th>
+                        <th>GPU</th>
+                        <th>显存</th>
+                        <th>队列</th>
+                        <th>负载</th>
+                        <th>状态</th>
+                    </tr>
+                </thead>
+                <tbody id="workers-tbody">
+                    <tr><td colspan="7" class="muted">等待算力注册...</td></tr>
+                </tbody>
+            </table>
+            <p class="muted" style="padding:8px 0 0;font-size:12px">
+                多机器模式：在每台机器上运行 <code>start_worker_supervised.bat</code> 即可加入
+            </p>
         </section>
 
         <!-- GPU 状态 -->

@@ -18,6 +18,7 @@ import requests
 import redis
 from flask import Flask, render_template, jsonify, request
 from comfy_instances import COMFY_INSTANCES, all_instances, get_instance
+import resource_registry as rr
 
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379
@@ -73,10 +74,12 @@ def api_status():
         "pause": r.get(KEY_PAUSE) == "true",
         "vip_pending": r.get(KEY_VIP_PENDING) == "true",
         "instances": {},
+        "workers": [],
         "gpus": _get_gpu_info(),
         "queues": {},
-        "totals": {"active": 0, "submitted": 0, "queued": 0},
+        "totals": {"active": 0, "submitted": 0, "queued": 0, "workers_online": 0},
     }
+    # 本地实例
     for inst in all_instances():
         cfg = get_instance(inst)
         url = cfg["url"]
@@ -100,6 +103,31 @@ def api_status():
         if qdepth > 0:
             data["totals"]["queued"] += qdepth
         data["queues"][inst] = qdepth
+
+    # 资源池（多机 worker）
+    try:
+        workers = rr.list_all()
+        for w in workers:
+            data["workers"].append({
+                "worker_id": w.get("worker_id"),
+                "hostname": w.get("hostname"),
+                "ip": w.get("ip"),
+                "gpu_index": int(w.get("gpu_index", 0)) if w.get("gpu_index") else 0,
+                "gpu_name": w.get("gpu_name", "?"),
+                "mem_free_mb": int(w.get("mem_free_mb", 0)),
+                "mem_total_mb": int(w.get("mem_total_mb", 0)),
+                "comfy_url": w.get("comfy_url"),
+                "queue": w.get("queue"),
+                "current_load": int(w.get("current_load", 0)),
+                "max_concurrent": int(w.get("max_concurrent", 1)),
+                "alive": w.get("alive", False),
+                "last_heartbeat": float(w.get("last_heartbeat", 0)),
+            })
+            if w.get("alive"):
+                data["totals"]["workers_online"] += 1
+    except Exception as e:
+        print(f"[dashboard] 读 registry 失败: {e}")
+
     return jsonify(data)
 
 
